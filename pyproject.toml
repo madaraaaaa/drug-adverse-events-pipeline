@@ -1,0 +1,20 @@
+[project]
+name = "api-work"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.4.2",
+    "pandas>=3.0.5",
+    "psycopg2-binary>=2.9.12",
+    "requests>=2.34.2",
+    "sqlalchemy>=2.0.52",
+    "tqdm>=4.70.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+]
