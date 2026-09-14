@@ -1,4 +1,5 @@
 services:
+  # YOUR EXISTING STUFF - keep these
   pg-database:
     image: postgres:18
     environment:
@@ -18,5 +19,45 @@ services:
     ports:
       - "8085:80"
 
+  # NEW STUFF - add these
+  kestra-postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: kestra
+      POSTGRES_DB: kestra
+    volumes:
+      - kestra_pg_data:/var/lib/postgresql
+
+  kestra:
+    image: kestra/kestra:v0.21.1
+    user: "root"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kestra-postgres
+    command: server standalone
+    volumes:
+      - kestra_data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KESTRA_CONFIGURATION: |
+        kestra:
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              basePath: /app/storage
+          queue:
+            type: postgres
+        datasources:
+          postgres:
+            url: jdbc:postgresql://kestra-postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: kestra
 volumes:
   pg_data:
+  kestra_pg_data:
+  kestra_data:
