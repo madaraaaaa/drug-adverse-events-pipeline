@@ -26,3 +26,24 @@ openFDA Drug Adverse Event API (https://api.fda.gov/drug/event.json)
 ## Data Fields
 - report_id, receive_date, serious, seriousnessdeath
 - patient_age, patient_sex, drug_name, reaction, country
+
+## Orchestration (Kestra)
+
+This pipeline is orchestrated using Kestra with a staging + merge pattern to avoid duplicate records on repeated runs.
+
+**Flow:** `flows/drug_adverse_events_pipeline.yaml`
+
+**Pipeline steps:**
+1. Create final table (if not exists)
+2. Create and truncate staging table
+3. Extract records from openFDA API and load into staging
+4. Merge only new records (by `report_id`) from staging into final table
+5. Clean up staging table
+
+**Schedule:** Runs automatically every Monday at 6am (currently disabled for testing — enable in the trigger section)
+
+**To run:**
+1. `docker compose up -d`
+2. Open `localhost:8080`
+3. Create a new flow and paste `flows/drug_adverse_events_pipeline.yaml`
+4. Execute manually, or enable the trigger for automatic weekly runs
