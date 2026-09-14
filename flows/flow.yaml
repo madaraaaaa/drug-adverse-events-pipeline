@@ -1,0 +1,117 @@
+id: drug_adverse_events_pipeline
+namespace: mahmoud.projects
+
+inputs:
+  - id: total_records
+    type: INT
+    defaults: 10000
+
+  - id: batch_size
+    type: INT
+    defaults: 100
+
+tasks:
+  # Step 1 — Create final table if not exists
+  - id: create_final_table
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: |
+      CREATE TABLE IF NOT EXISTS raw_adverse_events (
+        report_id TEXT,
+        receive_date TIMESTAMP,
+        serious BOOLEAN,
+        seriousnessdeath TEXT,
+        patient_age DOUBLE PRECISION,
+        patient_sex TEXT,
+        drug_name TEXT,
+        reaction TEXT,
+        country TEXT
+      );
+
+  # Step 2 — Create staging table and empty it
+  - id: create_staging_table
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: |
+      CREATE TABLE IF NOT EXISTS staging_adverse_events (
+        report_id TEXT,
+        receive_date TIMESTAMP,
+        serious BOOLEAN,
+        seriousnessdeath TEXT,
+        patient_age DOUBLE PRECISION,
+        patient_sex TEXT,
+        drug_name TEXT,
+        reaction TEXT,
+        country TEXT
+      );
+      TRUNCATE staging_adverse_events;
+
+  # Step 3 — Extract from API and load into staging
+  - id: extract_and_load
+    type: io.kestra.plugin.scripts.python.Script
+    runner: PROCESS
+    beforeCommands:
+      - pip install requests pandas sqlalchemy psycopg2-binary
+    script: |
+      import requests
+      import pandas as pd
+      from sqlalchemy import create_engine
+
+      engine = create_engine("postgresql://root:root@pg-database:5432/adverse_events")
+      total = {{ inputs.total_records }}
+      batch = {{ inputs.batch_size }}
+
+      for skip in range(0, total, batch):
+          url = f"https://api.fda.gov/drug/event.json?limit={batch}&skip={skip}"
+          response = requests.get(url)
+          events = response.json()["results"]
+
+          rows = []
+          for event in events:
+              patient = event.get("patient", {})
+              drugs = patient.get("drug", [{}])
+              reactions = patient.get("reaction", [{}])
+              rows.append({
+                  "report_id": event.get("safetyreportid"),
+                  "receive_date": event.get("receivedate"),
+                  "serious": event.get("serious") == "1",
+                  "seriousnessdeath": event.get("seriousnessdeath"),
+                  "patient_age": pd.to_numeric(patient.get("patientonsetage"), errors="coerce"),
+                  "patient_sex": {"1": "Male", "2": "Female"}.get(patient.get("patientsex")),
+                  "drug_name": drugs[0].get("medicinalproduct") if drugs else None,
+                  "reaction": reactions[0].get("reactionmeddrapt") if reactions else None,
+                  "country": event.get("primarysource", {}).get("reportercountry"),
+              })
+
+          df = pd.DataFrame(rows)
+          df["receive_date"] = pd.to_datetime(df["receive_date"], format="%Y%m%d", errors="coerce")
+          df.to_sql("staging_adverse_events", engine, if_exists="append", index=False)
+
+      print(f"Loaded {total} records into staging")
+
+  # Step 4 — Merge new records from staging into final
+  - id: merge_to_final
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: |
+      INSERT INTO raw_adverse_events
+      SELECT s.*
+      FROM staging_adverse_events s
+      LEFT JOIN raw_adverse_events f ON s.report_id = f.report_id
+      WHERE f.report_id IS NULL;
+
+  # Step 5 — Clean up staging
+  - id: cleanup_staging
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: |
+      TRUNCATE staging_adverse_events;
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.postgresql.Query
+    values:
+      url: jdbc:postgresql://pg-database:5432/adverse_events
+      username: root
+      password: root
+
+triggers:
+  - id: weekly_schedule
+    type: io.kestra.core.models.triggers.types.Schedule
+    cron: "0 6 * * MON"
+    disabled: true
